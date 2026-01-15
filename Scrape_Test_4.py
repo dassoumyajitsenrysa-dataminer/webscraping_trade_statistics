@@ -11,7 +11,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ----------------------------------------------------
-# FIXED SCHEMA — DO NOT INFER FROM HEADERS
+# Fixed schema (verified from HTML)
 # ----------------------------------------------------
 COLUMNS = [
     "Exporters",
@@ -46,7 +46,7 @@ driver = webdriver.Chrome(
     options=options
 )
 
-wait = WebDriverWait(driver, 30)
+wait = WebDriverWait(driver, 40)
 
 URL = (
     "https://www.trademap.org/"
@@ -56,14 +56,15 @@ URL = (
 
 driver.get(URL)
 
+# 🔑 WAIT FOR REAL DATA, NOT JUST TABLE
 wait.until(
     EC.presence_of_element_located(
-        (By.ID, "ctl00_PageContent_MyGridView1")
+        (By.CLASS_NAME, "partner_label")
     )
 )
 
 # ----------------------------------------------------
-# Row extractor — HTML VERIFIED
+# Extract rows (HTML-accurate)
 # ----------------------------------------------------
 def extract_rows(html):
     soup = BeautifulSoup(html, "lxml")
@@ -72,20 +73,16 @@ def extract_rows(html):
     rows = []
 
     for tr in table.find_all("tr"):
-        # Valid data rows ALWAYS contain this
         if not tr.find("a", class_="partner_label"):
             continue
 
         tds = tr.find_all("td")
-
-        # Must be exactly 19 TDs (1 icon + 18 data)
         if len(tds) != 19:
             continue
 
-        # Drop expand icon column (td[0])
         values = [
             td.get_text(strip=True).replace("\xa0", "") or None
-            for td in tds[1:]
+            for td in tds[1:]  # skip expand icon
         ]
 
         rows.append(values)
@@ -93,7 +90,7 @@ def extract_rows(html):
     return rows
 
 # ----------------------------------------------------
-# Pagination loop (ASP.NET __doPostBack)
+# Pagination loop
 # ----------------------------------------------------
 ALL_ROWS = []
 TOTAL_PAGES = 7
@@ -108,12 +105,15 @@ for page in range(1, TOTAL_PAGES + 1):
             "__doPostBack('ctl00$PageContent$MyGridView1','Page${}')"
             .format(page + 1)
         )
-        time.sleep(4)
+
+        # 🔑 WAIT AGAIN FOR DATA ROWS AFTER POSTBACK
         wait.until(
             EC.presence_of_element_located(
-                (By.ID, "ctl00_PageContent_MyGridView1")
+                (By.CLASS_NAME, "partner_label")
             )
         )
+
+        time.sleep(2)
 
 driver.quit()
 
@@ -134,10 +134,10 @@ for col in df.columns:
     )
 
 # ----------------------------------------------------
-# Save output
+# Save
 # ----------------------------------------------------
 df.to_csv("trademap_090111_all_pages.csv", index=False)
 
-print("DONE")
+print("SUCCESS")
 print("Rows:", len(df))
 print("Columns:", df.columns.tolist())
