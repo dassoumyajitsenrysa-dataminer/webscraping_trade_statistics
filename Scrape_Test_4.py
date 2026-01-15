@@ -10,9 +10,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# ---------------------------------------
+# ------------------------------------------------
 # 1. Selenium Setup
-# ---------------------------------------
+# ------------------------------------------------
 options = Options()
 options.add_argument("--start-maximized")
 options.add_argument("--disable-blink-features=AutomationControlled")
@@ -32,44 +32,48 @@ URL = (
 
 driver.get(URL)
 
-wait.until(EC.presence_of_element_located(
-    (By.ID, "ctl00_PageContent_MyGridView1")
-))
+wait.until(
+    EC.presence_of_element_located(
+        (By.ID, "ctl00_PageContent_MyGridView1")
+    )
+)
 
-# ---------------------------------------
-# 2. Extract Headers (ONCE)
-# ---------------------------------------
+# ------------------------------------------------
+# 2. Header Extraction (CORRECT)
+# ------------------------------------------------
 soup = BeautifulSoup(driver.page_source, "lxml")
 table = soup.find("table", id="ctl00_PageContent_MyGridView1")
 
-header_row = table.find_all("tr")[2]   # second header line
-headers = [
-    th.get_text(strip=True)
-    for th in header_row.find_all("th")
-]
+headers = []
+for tr in table.find_all("tr"):
+    ths = tr.find_all("th")
+    if ths:
+        headers = [th.get_text(strip=True) for th in ths]
+        break  # FIRST real header row found
 
-# Remove the first column (expand icon)
+# Remove expand-column header
 headers = headers[1:]
 
-# ---------------------------------------
-# 3. Row Extractor (NO JUNK)
-# ---------------------------------------
+# ------------------------------------------------
+# 3. Row Extractor (FIXED)
+# ------------------------------------------------
 def extract_country_rows(html):
     soup = BeautifulSoup(html, "lxml")
     table = soup.find("table", id="ctl00_PageContent_MyGridView1")
 
     rows = []
+
     for tr in table.find_all("tr"):
-        country = tr.find("a", class_="partner_label")
-        if not country:
+        country_tag = tr.find("a", class_="partner_label")
+        if not country_tag:
             continue
 
         tds = tr.find_all("td")
-        if len(tds) < 19:
+        if len(tds) < len(headers) + 1:
             continue
 
         row = []
-        for td in tds[1:]:  # skip expand icon column
+        for td in tds[1:len(headers) + 1]:  # skip expand icon
             text = td.get_text(" ", strip=True)
             row.append(text if text else None)
 
@@ -77,18 +81,16 @@ def extract_country_rows(html):
 
     return rows
 
-
-# ---------------------------------------
+# ------------------------------------------------
 # 4. Pagination Loop
-# ---------------------------------------
+# ------------------------------------------------
 ALL_ROWS = []
 TOTAL_PAGES = 7
 
 for page in range(1, TOTAL_PAGES + 1):
     print(f"Scraping page {page}...")
 
-    html = driver.page_source
-    rows = extract_country_rows(html)
+    rows = extract_country_rows(driver.page_source)
     ALL_ROWS.extend(rows)
 
     if page < TOTAL_PAGES:
@@ -97,20 +99,22 @@ for page in range(1, TOTAL_PAGES + 1):
             .format(page + 1)
         )
         time.sleep(4)
-        wait.until(EC.presence_of_element_located(
-            (By.ID, "ctl00_PageContent_MyGridView1")
-        ))
+        wait.until(
+            EC.presence_of_element_located(
+                (By.ID, "ctl00_PageContent_MyGridView1")
+            )
+        )
 
 driver.quit()
 
-# ---------------------------------------
+# ------------------------------------------------
 # 5. DataFrame
-# ---------------------------------------
+# ------------------------------------------------
 df = pd.DataFrame(ALL_ROWS, columns=headers)
 
-# ---------------------------------------
+# ------------------------------------------------
 # 6. Cleaning
-# ---------------------------------------
+# ------------------------------------------------
 for col in df.columns:
     df[col] = (
         df[col]
@@ -120,11 +124,11 @@ for col in df.columns:
         .replace({"None": None})
     )
 
-# ---------------------------------------
+# ------------------------------------------------
 # 7. Save
-# ---------------------------------------
-df.to_csv("HSN_090111_all_pages_clean.csv", index=False)
+# ------------------------------------------------
+df.to_csv("trademap_090111_all_pages.csv", index=False)
 
-print("DONE")
+print("SUCCESS")
 print("Rows:", len(df))
-print("Columns:", list(df.columns))
+print("Columns:", df.columns.tolist())
