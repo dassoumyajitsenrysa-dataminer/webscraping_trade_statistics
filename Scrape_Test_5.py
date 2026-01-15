@@ -11,7 +11,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # --------------------------------------------------
-# CONFIG
+# CONFIG (MATCHES YOUR DOM)
 # --------------------------------------------------
 URL = (
     "https://www.trademap.org/"
@@ -25,7 +25,6 @@ COLUMNS = [
     "Value imported in 2024 (USD thousand)",
     "Trade balance 2024 (USD thousand)",
     "Share in India's imports (%)",
-    "Share of India in partner's exports (%)",
     "Quantity imported in 2024",
     "Quantity unit",
     "Unit value (USD/unit)",
@@ -37,16 +36,13 @@ COLUMNS = [
     "Partner exports growth 2020-2024 (% p.a.)",
     "Average distance (km)",
     "Concentration of importing countries",
-    "Average tariff applied by India (%)",
-    "Tariff link / misc",
-    "Untapped potential trade (USD thousand)",
+    "Untapped potential trade / misc",
 ]
 
 # --------------------------------------------------
 # SELENIUM SETUP
 # --------------------------------------------------
 options = Options()
-options.add_argument("--disable-blink-features=AutomationControlled")
 options.add_argument("--start-maximized")
 
 driver = webdriver.Chrome(
@@ -57,11 +53,11 @@ driver = webdriver.Chrome(
 wait = WebDriverWait(driver, 40)
 driver.get(URL)
 
-# 🔑 Wait for real data rows (not just table)
+# Wait for real data rows
 wait.until(EC.presence_of_element_located((By.CLASS_NAME, "partner_label")))
 
 # --------------------------------------------------
-# ROW EXTRACTION (HTML-EXACT)
+# ROW EXTRACTION (17 TDs EXACT)
 # --------------------------------------------------
 def extract_rows(html):
     soup = BeautifulSoup(html, "lxml")
@@ -70,20 +66,18 @@ def extract_rows(html):
     rows = []
 
     for tr in table.find_all("tr"):
-        # real data rows always have this
         if not tr.find("a", class_="partner_label"):
             continue
 
         tds = tr.find_all("td")
 
-        # EXACTLY 20 <td> per your HTML
-        if len(tds) != 20:
+        # 🔑 EXACT count from your diagnostic
+        if len(tds) != 17:
             continue
 
-        # skip expand/bilateral column (td[0])
         values = [
             td.get_text(strip=True).replace("\xa0", "") or None
-            for td in tds[1:]
+            for td in tds[1:]  # drop expand icon
         ]
 
         rows.append(values)
@@ -99,7 +93,7 @@ for page in range(1, TOTAL_PAGES + 1):
     print(f"Scraping page {page}")
 
     page_rows = extract_rows(driver.page_source)
-    print(f"  Rows found: {len(page_rows)}")
+    print(f"  Rows extracted: {len(page_rows)}")
     all_rows.extend(page_rows)
 
     if page < TOTAL_PAGES:
@@ -117,7 +111,7 @@ driver.quit()
 # --------------------------------------------------
 df = pd.DataFrame(all_rows, columns=COLUMNS)
 
-# Clean numeric formatting
+# Clean numbers
 for col in df.columns:
     df[col] = (
         df[col]
@@ -126,10 +120,7 @@ for col in df.columns:
         .replace({"": None, "None": None})
     )
 
-# --------------------------------------------------
-# SAVE OUTPUT
-# --------------------------------------------------
-df.to_csv("trademap_final_correct.csv", index=False)
+df.to_csv("trademap_final_WORKING.csv", index=False)
 
 print("\nSUCCESS")
 print("Total rows:", len(df))
