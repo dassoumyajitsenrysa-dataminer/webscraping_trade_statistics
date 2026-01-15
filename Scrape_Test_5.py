@@ -13,26 +13,32 @@ from webdriver_manager.chrome import ChromeDriverManager
 # --------------------------------------------------
 # CONFIG
 # --------------------------------------------------
-URL = "https://www.trademap.org/Country_SelProductCountry.aspx?nvpm=1|699||||090111|||6|1|1|1|1||2|1||1"
+URL = (
+    "https://www.trademap.org/"
+    "Country_SelProductCountry.aspx?"
+    "nvpm=1|699||||090111|||6|1|1|1|1||2|1||1"
+)
 TOTAL_PAGES = 7
 
 COLUMNS = [
     "Exporter",
-    "Value imported (USD thousand)",
-    "Trade balance (USD thousand)",
+    "Value imported in 2024 (USD thousand)",
+    "Trade balance 2024 (USD thousand)",
     "Share in India's imports (%)",
-    "Quantity",
+    "Share of India in partner's exports (%)",
+    "Quantity imported in 2024",
     "Quantity unit",
     "Unit value (USD/unit)",
-    "Growth value 2020-2024",
-    "Growth quantity 2020-2024",
-    "Growth value 2023-2024",
-    "World export rank",
+    "Growth in imported value 2020-2024 (% p.a.)",
+    "Growth in imported quantity 2020-2024 (% p.a.)",
+    "Growth in imported value 2023-2024 (% p.a.)",
+    "Ranking in world exports",
     "Share in world exports (%)",
-    "Partner export growth",
+    "Partner exports growth 2020-2024 (% p.a.)",
     "Average distance (km)",
-    "Market concentration",
-    "Average tariff (%)",
+    "Concentration of importing countries",
+    "Average tariff applied by India (%)",
+    "Tariff link / misc",
     "Untapped potential trade (USD thousand)",
 ]
 
@@ -51,70 +57,33 @@ driver = webdriver.Chrome(
 wait = WebDriverWait(driver, 40)
 driver.get(URL)
 
-# --------------------------------------------------
-# WAIT FOR GRID DATA
-# --------------------------------------------------
+# 🔑 Wait for real data rows (not just table)
 wait.until(EC.presence_of_element_located((By.CLASS_NAME, "partner_label")))
 
 # --------------------------------------------------
-# OPEN INDICATOR PICKER
+# ROW EXTRACTION (HTML-EXACT)
 # --------------------------------------------------
-print("Opening indicator selector...")
-
-indicator_button = wait.until(
-    EC.element_to_be_clickable(
-        (By.XPATH, "//input[contains(@class,'buttonColumnPicker')]")
-    )
-)
-indicator_button.click()
-
-# --------------------------------------------------
-# SELECT "UNTAPPED POTENTIAL TRADE"
-# --------------------------------------------------
-popup = wait.until(
-    EC.presence_of_element_located((By.ID, "divIndicators"))
-)
-
-checkbox = popup.find_element(
-    By.XPATH,
-    ".//label[contains(., 'Estimation of untapped potential trade')]/preceding-sibling::input"
-)
-
-if not checkbox.is_selected():
-    checkbox.click()
-
-# APPLY SELECTION
-apply_button = popup.find_element(By.XPATH, ".//input[@type='submit']")
-apply_button.click()
-
-# --------------------------------------------------
-# WAIT FOR GRID TO REBIND
-# --------------------------------------------------
-wait.until(EC.presence_of_element_located((By.CLASS_NAME, "partner_label")))
-time.sleep(2)
-
-print("Indicator applied successfully")
-
-# --------------------------------------------------
-# ROW EXTRACTION
-# --------------------------------------------------
-def extract_page_rows(html):
+def extract_rows(html):
     soup = BeautifulSoup(html, "lxml")
     table = soup.find("table", id="ctl00_PageContent_MyGridView1")
+
     rows = []
 
     for tr in table.find_all("tr"):
-        partner = tr.find("a", class_="partner_label")
+        # real data rows always have this
+        if not tr.find("a", class_="partner_label"):
+            continue
+
         tds = tr.find_all("td")
 
-        if not partner:
-            continue
-        if len(tds) < 18:   # now includes extra column
+        # EXACTLY 20 <td> per your HTML
+        if len(tds) != 20:
             continue
 
+        # skip expand/bilateral column (td[0])
         values = [
             td.get_text(strip=True).replace("\xa0", "") or None
-            for td in tds[1:19]  # skip expand icon
+            for td in tds[1:]
         ]
 
         rows.append(values)
@@ -129,7 +98,7 @@ all_rows = []
 for page in range(1, TOTAL_PAGES + 1):
     print(f"Scraping page {page}")
 
-    page_rows = extract_page_rows(driver.page_source)
+    page_rows = extract_rows(driver.page_source)
     print(f"  Rows found: {len(page_rows)}")
     all_rows.extend(page_rows)
 
@@ -148,15 +117,20 @@ driver.quit()
 # --------------------------------------------------
 df = pd.DataFrame(all_rows, columns=COLUMNS)
 
+# Clean numeric formatting
 for col in df.columns:
     df[col] = (
-        df[col].astype(str)
+        df[col]
+        .astype(str)
         .str.replace(",", "", regex=False)
         .replace({"": None, "None": None})
     )
 
-df.to_csv("trademap_with_untapped_potential.csv", index=False)
+# --------------------------------------------------
+# SAVE OUTPUT
+# --------------------------------------------------
+df.to_csv("trademap_final_correct.csv", index=False)
 
 print("\nSUCCESS")
-print("Rows:", len(df))
+print("Total rows:", len(df))
 print(df.head())
