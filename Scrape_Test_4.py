@@ -5,8 +5,8 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
@@ -32,32 +32,30 @@ URL = (
 
 driver.get(URL)
 
-wait.until(
-    EC.presence_of_element_located(
-        (By.ID, "ctl00_PageContent_MyGridView1")
-    )
-)
+wait.until(EC.presence_of_element_located(
+    (By.ID, "ctl00_PageContent_MyGridView1")
+))
 
 # ------------------------------------------------
-# 2. Header Extraction (CORRECT)
+# 2. Extract Headers (CORRECT WAY)
 # ------------------------------------------------
 soup = BeautifulSoup(driver.page_source, "lxml")
 table = soup.find("table", id="ctl00_PageContent_MyGridView1")
 
-headers = []
-for tr in table.find_all("tr"):
-    ths = tr.find_all("th")
-    if ths:
-        headers = [th.get_text(strip=True) for th in ths]
-        break  # FIRST real header row found
+header_rows = table.find_all("tr")
 
-# Remove expand-column header
-headers = headers[1:]
+# Second header row contains numeric headers
+second_header = header_rows[2]
+
+headers = ["Exporters"]  # THIS IS A TD COLUMN, NOT TH
+
+for th in second_header.find_all("th"):
+    headers.append(th.get_text(strip=True))
 
 # ------------------------------------------------
-# 3. Row Extractor (FIXED)
+# 3. Extract ALL country rows (NO SLICING)
 # ------------------------------------------------
-def extract_country_rows(html):
+def extract_rows(html):
     soup = BeautifulSoup(html, "lxml")
     table = soup.find("table", id="ctl00_PageContent_MyGridView1")
 
@@ -72,10 +70,8 @@ def extract_country_rows(html):
         if len(tds) < len(headers) + 1:
             continue
 
-        row = []
-        for td in tds[1:len(headers) + 1]:  # skip expand icon
-            text = td.get_text(" ", strip=True)
-            row.append(text if text else None)
+        # Skip expand-icon td, keep EVERYTHING else
+        row = [td.get_text(" ", strip=True) or None for td in tds[1:]]
 
         rows.append(row)
 
@@ -84,14 +80,12 @@ def extract_country_rows(html):
 # ------------------------------------------------
 # 4. Pagination Loop
 # ------------------------------------------------
-ALL_ROWS = []
+all_rows = []
 TOTAL_PAGES = 7
 
 for page in range(1, TOTAL_PAGES + 1):
     print(f"Scraping page {page}...")
-
-    rows = extract_country_rows(driver.page_source)
-    ALL_ROWS.extend(rows)
+    all_rows.extend(extract_rows(driver.page_source))
 
     if page < TOTAL_PAGES:
         driver.execute_script(
@@ -99,18 +93,16 @@ for page in range(1, TOTAL_PAGES + 1):
             .format(page + 1)
         )
         time.sleep(4)
-        wait.until(
-            EC.presence_of_element_located(
-                (By.ID, "ctl00_PageContent_MyGridView1")
-            )
-        )
+        wait.until(EC.presence_of_element_located(
+            (By.ID, "ctl00_PageContent_MyGridView1")
+        ))
 
 driver.quit()
 
 # ------------------------------------------------
 # 5. DataFrame
 # ------------------------------------------------
-df = pd.DataFrame(ALL_ROWS, columns=headers)
+df = pd.DataFrame(all_rows, columns=headers)
 
 # ------------------------------------------------
 # 6. Cleaning
