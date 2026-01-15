@@ -10,9 +10,33 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# ------------------------------------------------
-# 1. Selenium Setup
-# ------------------------------------------------
+# ----------------------------------------------------
+# FIXED SCHEMA — DO NOT INFER FROM HEADERS
+# ----------------------------------------------------
+COLUMNS = [
+    "Exporters",
+    "Value imported in 2024 (USD thousand)",
+    "Trade balance 2024 (USD thousand)",
+    "Share in India's imports (%)",
+    "Share of India in partner's exports (%)",
+    "Quantity imported in 2024",
+    "Quantity unit",
+    "Unit value (USD/unit)",
+    "Growth in imported value 2020-2024 (% p.a.)",
+    "Growth in imported quantity 2020-2024 (% p.a.)",
+    "Growth in imported value 2023-2024 (% p.a.)",
+    "Ranking in world exports",
+    "Share in world exports (%)",
+    "Partner exports growth 2020-2024 (% p.a.)",
+    "Average distance (km)",
+    "Concentration of importing countries",
+    "Average tariff applied by India (%)",
+    "Untapped potential trade (USD thousand)",
+]
+
+# ----------------------------------------------------
+# Selenium setup
+# ----------------------------------------------------
 options = Options()
 options.add_argument("--start-maximized")
 options.add_argument("--disable-blink-features=AutomationControlled")
@@ -32,29 +56,15 @@ URL = (
 
 driver.get(URL)
 
-wait.until(EC.presence_of_element_located(
-    (By.ID, "ctl00_PageContent_MyGridView1")
-))
+wait.until(
+    EC.presence_of_element_located(
+        (By.ID, "ctl00_PageContent_MyGridView1")
+    )
+)
 
-# ------------------------------------------------
-# 2. Extract Headers (CORRECT WAY)
-# ------------------------------------------------
-soup = BeautifulSoup(driver.page_source, "lxml")
-table = soup.find("table", id="ctl00_PageContent_MyGridView1")
-
-header_rows = table.find_all("tr")
-
-# Second header row contains numeric headers
-second_header = header_rows[2]
-
-headers = ["Exporters"]  # THIS IS A TD COLUMN, NOT TH
-
-for th in second_header.find_all("th"):
-    headers.append(th.get_text(strip=True))
-
-# ------------------------------------------------
-# 3. Extract ALL country rows (NO SLICING)
-# ------------------------------------------------
+# ----------------------------------------------------
+# Row extractor — HTML VERIFIED
+# ----------------------------------------------------
 def extract_rows(html):
     soup = BeautifulSoup(html, "lxml")
     table = soup.find("table", id="ctl00_PageContent_MyGridView1")
@@ -62,30 +72,36 @@ def extract_rows(html):
     rows = []
 
     for tr in table.find_all("tr"):
-        country_tag = tr.find("a", class_="partner_label")
-        if not country_tag:
+        # Valid data rows ALWAYS contain this
+        if not tr.find("a", class_="partner_label"):
             continue
 
         tds = tr.find_all("td")
-        if len(tds) < len(headers) + 1:
+
+        # Must be exactly 19 TDs (1 icon + 18 data)
+        if len(tds) != 19:
             continue
 
-        # Skip expand-icon td, keep EVERYTHING else
-        row = [td.get_text(" ", strip=True) or None for td in tds[1:]]
+        # Drop expand icon column (td[0])
+        values = [
+            td.get_text(strip=True).replace("\xa0", "") or None
+            for td in tds[1:]
+        ]
 
-        rows.append(row)
+        rows.append(values)
 
     return rows
 
-# ------------------------------------------------
-# 4. Pagination Loop
-# ------------------------------------------------
-all_rows = []
+# ----------------------------------------------------
+# Pagination loop (ASP.NET __doPostBack)
+# ----------------------------------------------------
+ALL_ROWS = []
 TOTAL_PAGES = 7
 
 for page in range(1, TOTAL_PAGES + 1):
     print(f"Scraping page {page}...")
-    all_rows.extend(extract_rows(driver.page_source))
+
+    ALL_ROWS.extend(extract_rows(driver.page_source))
 
     if page < TOTAL_PAGES:
         driver.execute_script(
@@ -93,34 +109,35 @@ for page in range(1, TOTAL_PAGES + 1):
             .format(page + 1)
         )
         time.sleep(4)
-        wait.until(EC.presence_of_element_located(
-            (By.ID, "ctl00_PageContent_MyGridView1")
-        ))
+        wait.until(
+            EC.presence_of_element_located(
+                (By.ID, "ctl00_PageContent_MyGridView1")
+            )
+        )
 
 driver.quit()
 
-# ------------------------------------------------
-# 5. DataFrame
-# ------------------------------------------------
-df = pd.DataFrame(all_rows, columns=headers)
+# ----------------------------------------------------
+# Build DataFrame
+# ----------------------------------------------------
+df = pd.DataFrame(ALL_ROWS, columns=COLUMNS)
 
-# ------------------------------------------------
-# 6. Cleaning
-# ------------------------------------------------
+# ----------------------------------------------------
+# Clean numeric artifacts
+# ----------------------------------------------------
 for col in df.columns:
     df[col] = (
         df[col]
-        .replace({"": None, "\xa0": None})
         .astype(str)
         .str.replace(",", "", regex=False)
-        .replace({"None": None})
+        .replace({"": None, "None": None})
     )
 
-# ------------------------------------------------
-# 7. Save
-# ------------------------------------------------
+# ----------------------------------------------------
+# Save output
+# ----------------------------------------------------
 df.to_csv("trademap_090111_all_pages.csv", index=False)
 
-print("SUCCESS")
+print("DONE")
 print("Rows:", len(df))
 print("Columns:", df.columns.tolist())
