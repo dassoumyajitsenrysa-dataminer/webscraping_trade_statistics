@@ -21,7 +21,7 @@ YEAR = 2024
 HS6_CODE = "090111"
 
 
-# ----------------- BROWSER -----------------
+# -------------------- DRIVER --------------------
 options = Options()
 options.add_argument("--start-maximized")
 
@@ -36,7 +36,41 @@ driver.get(URL)
 wait.until(EC.presence_of_element_located((By.ID, "ctl00_PageContent_MyGridView1")))
 
 
-# ----------------- PARSERS -----------------
+# -------------------- HS8 PARSER --------------------
+def parse_hs8(html, country):
+    soup = BeautifulSoup(html, "lxml")
+    table = soup.find("table", id="ctl00_PageContent_MyGridView1")
+
+    rows = table.find_all("tr")[2:]  # skip headers
+    data = []
+
+    for tr in rows:
+        tds = tr.find_all("td")
+        if len(tds) < 9:
+            continue
+
+        hs8 = tds[0].get_text(strip=True)
+        if not hs8.isdigit():
+            continue
+
+        data.append({
+            "country": country,
+            "hs6_code": HS6_CODE,
+            "hs8_code": hs8,
+            "year": YEAR,
+            "product_label": tds[1].get_text(strip=True),
+            "value_2022_country": tds[2].get_text(strip=True),
+            "value_2023_country": tds[3].get_text(strip=True),
+            "value_2024_country": tds[4].get_text(strip=True),
+            "value_2022_world": tds[6].get_text(strip=True),
+            "value_2023_world": tds[7].get_text(strip=True),
+            "value_2024_world": tds[8].get_text(strip=True),
+        })
+
+    return data
+
+
+# -------------------- HS6 PARSER --------------------
 def parse_hs6(html):
     soup = BeautifulSoup(html, "lxml")
     table = soup.find("table", id="ctl00_PageContent_MyGridView1")
@@ -77,53 +111,17 @@ def parse_hs6(html):
     return data
 
 
-def parse_hs8(html, country):
-    soup = BeautifulSoup(html, "lxml")
-    tables = soup.find_all("table")
-
-    # HS8 table is always the LAST rendered table
-    table = tables[-1]
-    rows = table.find_all("tr")[1:]
-
-    data = []
-
-    for tr in rows:
-        tds = tr.find_all("td")
-        if len(tds) < 5:
-            continue
-
-        hs8 = tds[0].get_text(strip=True)
-        if not hs8.isdigit():
-            continue
-
-        data.append({
-            "country": country,
-            "hs6_code": HS6_CODE,
-            "hs8_code": hs8,
-            "year": YEAR,
-            "product_label": tds[1].get_text(strip=True),
-            "value_2022": tds[2].get_text(strip=True),
-            "value_2023": tds[3].get_text(strip=True),
-            "value_2024": tds[4].get_text(strip=True),
-        })
-
-    return data
-
-
-# ----------------- MAIN LOOP -----------------
-hs6_rows = []
+# -------------------- MAIN LOOP --------------------
 hs8_rows = []
+hs6_rows = []
 
 page = 1
 
 while True:
-    print(f"Scraping page {page}")
-    time.sleep(3)
+    print(f"Processing page {page}")
+    time.sleep(2)
 
-    html = driver.page_source
-    hs6_rows.extend(parse_hs6(html))
-
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(driver.page_source, "lxml")
     country_links = soup.select("a.partner_label")
 
     for link in country_links:
@@ -132,9 +130,14 @@ while True:
             continue
 
         try:
+            print(f"  ➕ Expanding {country}")
             elem = driver.find_element(By.LINK_TEXT, country)
             elem.click()
-            time.sleep(4)
+
+            wait.until(EC.presence_of_element_located(
+                (By.ID, "ctl00_PageContent_MyGridView1")
+            ))
+            time.sleep(2)
 
             hs8_rows.extend(parse_hs8(driver.page_source, country))
 
@@ -142,26 +145,26 @@ while True:
             wait.until(EC.presence_of_element_located(
                 (By.ID, "ctl00_PageContent_MyGridView1")
             ))
+
         except Exception:
             continue
 
+    # pagination
     try:
-        next_page = driver.find_element(
-            By.LINK_TEXT, str(page + 1)
-        )
+        next_page = driver.find_element(By.LINK_TEXT, str(page + 1))
         next_page.click()
         page += 1
     except:
         break
 
 
+# collect HS6 after HS8 is complete
+hs6_rows = parse_hs6(driver.page_source)
+
 driver.quit()
 
 
-# ----------------- SAVE -----------------
-df_hs6 = pd.DataFrame(hs6_rows)
-df_hs8 = pd.DataFrame(hs8_rows)
-
+# -------------------- CLEAN & SAVE --------------------
 def clean(df):
     for c in df.columns:
         df[c] = (
@@ -171,10 +174,11 @@ def clean(df):
         )
     return df
 
-df_hs6 = clean(df_hs6)
-df_hs8 = clean(df_hs8)
 
-df_hs6.to_csv("hs6_data.csv", index=False)
-df_hs8.to_csv("hs8_data.csv", index=False)
+df_hs8 = clean(pd.DataFrame(hs8_rows))
+df_hs6 = clean(pd.DataFrame(hs6_rows))
 
-print("DONE ✔")
+df_hs8.to_csv("hs8_country_level.csv", index=False)
+df_hs6.to_csv("hs6_country_level.csv", index=False)
+
+print("✔ SCRAPING COMPLETE")
