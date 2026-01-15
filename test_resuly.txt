@@ -1,0 +1,23 @@
+TABLE FOUND: True
+TOTAL <tr>: 31
+DATA ROW COUNT: 25
+TD COUNTS SEEN: {17}
+
+FIRST DATA ROW TD COUNT: 17
+TD[0] =
+TD[1] = World
+TD[2] = 236,354
+TD[3] = 893,059
+TD[4] = 100
+TD[5] = 78,680
+TD[6] = Tons
+TD[7] = 3,004
+TD[8] = 23
+TD[9] = 2
+TD[10] = 23
+TD[11] =
+TD[12] = 100
+TD[13] = 13
+TD[14] =
+TD[15] =
+TD[16] =
