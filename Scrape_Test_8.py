@@ -1,183 +1,79 @@
-import time
-import pandas as pd
-from bs4 import BeautifulSoup
-
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+import time
 
-
-# ================= CONFIG =================
-USERNAME = "YOUR_EMAIL"
-PASSWORD = "YOUR_PASSWORD"
-
-HS6_CODE = "090111"
-REPORTER = "India"
-YEAR = 2024
-
-URL = "https://www.trademap.org/Index.aspx"
-
-
-# ================= DRIVER =================
-options = Options()
-options.add_argument("--start-maximized")
-
-driver = webdriver.Chrome(
-    service=Service(ChromeDriverManager().install()),
-    options=options
-)
-
+driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
 wait = WebDriverWait(driver, 40)
-driver.get(URL)
+
+driver.get("https://www.trademap.org/Index.aspx")
 
 
-# ================= LOGIN IF REQUIRED =================
-def ensure_login():
+# ================= ENSURE LOGIN MANUALLY OR AUTO =================
+def ensure_logged_in():
     try:
         login_label = driver.find_element(By.ID, "ctl00_MenuControl_Label_Login")
         if login_label.text.strip().lower() == "login":
-            print("🔐 Logging in...")
-            driver.find_element(By.ID, "ctl00_MenuControl_marmenu_login").click()
-
-            wait.until(EC.presence_of_element_located((By.ID, "txtUserName")))
-            driver.find_element(By.ID, "txtUserName").send_keys(USERNAME)
-            driver.find_element(By.ID, "txtPassword").send_keys(PASSWORD)
-            driver.find_element(By.ID, "btnLogin").click()
-
-            wait.until(EC.presence_of_element_located(
-                (By.ID, "ctl00_PageContent_RadComboBox_Product_Input")
-            ))
-            print("✅ Login successful")
+            raise Exception("Login required")
     except:
-        print("✅ Already logged in")
+        print("⚠️ Please login manually once, then press ENTER here")
+        input()
+        wait.until(EC.presence_of_element_located(
+            (By.ID, "ctl00_PageContent_RadComboBox_Product_Input")
+        ))
+
+ensure_logged_in()
 
 
-ensure_login()
-
-
-# ================= ENTER HS6 =================
-product_box = wait.until(EC.element_to_be_clickable(
+# ================= ENTER HS6 *CORRECTLY* =================
+product_input = wait.until(EC.element_to_be_clickable(
     (By.ID, "ctl00_PageContent_RadComboBox_Product_Input")
 ))
-product_box.clear()
-product_box.send_keys(HS6_CODE)
-time.sleep(1)
-product_box.send_keys(Keys.ENTER)
+
+product_input.clear()
+product_input.send_keys("090111")
+
+# 🔑 wait for dropdown to load
+time.sleep(2)
+
+# 🔑 select from dropdown (THIS IS THE FIX)
+product_option = wait.until(EC.element_to_be_clickable(
+    (By.XPATH, "//div[contains(@id,'RadComboBox_Product_DropDown')]//li[contains(text(),'090111')]")
+))
+product_option.click()
+
+print("✅ HS6 code 090111 selected correctly")
 
 
 # ================= SELECT INDIA =================
-country_box = wait.until(EC.element_to_be_clickable(
+country_input = wait.until(EC.element_to_be_clickable(
     (By.ID, "ctl00_PageContent_RadComboBox_Country_Input")
 ))
-country_box.clear()
-country_box.send_keys(REPORTER)
-time.sleep(1)
-country_box.send_keys(Keys.ENTER)
+
+country_input.clear()
+country_input.send_keys("India")
+time.sleep(2)
+
+country_option = wait.until(EC.element_to_be_clickable(
+    (By.XPATH, "//div[contains(@id,'RadComboBox_Country_DropDown')]//li[contains(text(),'India')]")
+))
+country_option.click()
+
+print("✅ Country selected: India")
 
 
-# ================= CLICK TRADE INDICATORS (CRITICAL FIX) =================
-trade_indicators_btn = wait.until(EC.element_to_be_clickable(
+# ================= CLICK TRADE INDICATORS =================
+trade_btn = wait.until(EC.element_to_be_clickable(
     (By.ID, "ctl00_PageContent_Button_TradeIndicators")
 ))
-driver.execute_script("arguments[0].click();", trade_indicators_btn)
+trade_btn.click()
 
 wait.until(EC.presence_of_element_located(
     (By.ID, "ctl00_PageContent_MyGridView1")
 ))
 
-print("📊 Trade Indicators page loaded")
-
-
-# ================= PARSER =================
-def parse_table(html, level, reporter):
-    soup = BeautifulSoup(html, "lxml")
-    table = soup.find("table", id="ctl00_PageContent_MyGridView1")
-    rows = table.find_all("tr")[2:]
-
-    data = []
-    for tr in rows:
-        tds = tr.find_all("td")
-        if len(tds) < 9:
-            continue
-
-        code = tds[0].get_text(strip=True)
-        if not code.isdigit():
-            continue
-
-        data.append({
-            "reporter": reporter,
-            "year": YEAR,
-            "hs6_code": HS6_CODE if level == "HS8" else code,
-            "hs8_code": code if level == "HS8" else None,
-            "product_label": tds[1].get_text(strip=True),
-            "value_2022": tds[2].get_text(strip=True),
-            "value_2023": tds[3].get_text(strip=True),
-            "value_2024": tds[4].get_text(strip=True),
-            "unit": tds[6].get_text(strip=True),
-            "world_share": tds[12].get_text(strip=True)
-        })
-
-    return data
-
-
-# ================= HS6 DATA =================
-hs6_data = parse_table(driver.page_source, "HS6", REPORTER)
-
-
-# ================= HS8 DATA =================
-hs8_data = []
-
-rows = driver.find_elements(
-    By.XPATH,
-    "//table[@id='ctl00_PageContent_MyGridView1']//tr[td/a[@class='partner_label']]"
-)
-
-for row in rows:
-    country = row.find_element(By.CLASS_NAME, "partner_label").text
-    if country == "World":
-        continue
-
-    try:
-        plus_btn = row.find_element(By.XPATH, ".//input[contains(@class,'breakdown')]")
-        driver.execute_script("arguments[0].click();", plus_btn)
-
-        wait.until(EC.presence_of_element_located(
-            (By.XPATH, "//th[contains(text(),'Product code')]")
-        ))
-        time.sleep(2)
-
-        hs8_data.extend(parse_table(driver.page_source, "HS8", country))
-
-        driver.back()
-        wait.until(EC.presence_of_element_located(
-            (By.ID, "ctl00_PageContent_MyGridView1")
-        ))
-
-    except Exception as e:
-        print(f"❌ HS8 failed for {country}: {e}")
-
-
-driver.quit()
-
-
-# ================= SAVE =================
-df_hs6 = pd.DataFrame(hs6_data)
-df_hs8 = pd.DataFrame(hs8_data)
-
-for df in (df_hs6, df_hs8):
-    for c in df.columns:
-        df[c] = (
-            df[c].astype(str)
-            .str.replace(",", "", regex=False)
-            .replace({"": None, "-": None})
-        )
-
-df_hs6.to_csv("hs6_india.csv", index=False)
-df_hs8.to_csv("hs8_india.csv", index=False)
-
-print("✅ SUCCESS: Trade Indicators → HS6 & HS8 extracted")
+print("📊 Trade Indicators loaded correctly")
